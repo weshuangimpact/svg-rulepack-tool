@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SVG 規則產生器 · CDR / RTPS</title>
+<style>
+  /* 配色:CDR 版用「藍鋼」色系,與 JSON 版(金褐)區隔 */
+  :root{--bg:#eef1f4;--card:#fff;--ink:#16202b;--muted:#5f6b78;--line:#d3dae1;
+    --accent:#2f6ab8;--ok:#1d7a53;--ok-bg:#e3f3ec;--bad:#b3382f;--bad-bg:#f8e9e7;
+    --mono:'SFMono-Regular',Consolas,Menlo,monospace;}
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,'Segoe UI','Noto Sans TC',sans-serif;background:var(--bg);color:var(--ink);line-height:1.6;}
+  .wrap{max-width:920px;margin:0 auto;padding:24px 20px 80px;}
+  h1{font-size:24px;font-weight:700;margin:0 0 4px;}
+  .sub{color:var(--muted);font-size:14px;margin-bottom:24px;}
+  .step{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-bottom:16px;}
+  .step-h{display:flex;align-items:center;gap:8px;font-weight:600;font-size:15px;margin-bottom:12px;}
+  .num{background:var(--accent);color:#fff;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px;flex:none;}
+  label{font-size:13px;color:var(--muted);display:block;margin-bottom:6px;}
+  textarea,input[type=text],input[type=number],select{font-family:var(--mono);border:1px solid var(--line);border-radius:6px;padding:7px 9px;font-size:12px;background:#fff;}
+  textarea{width:100%;resize:vertical;}
+  button{font-family:inherit;font-size:14px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;padding:9px 16px;cursor:pointer;font-weight:500;}
+  button.ghost{background:#fff;color:var(--accent);}
+  button:disabled{opacity:.4;cursor:not-allowed;}
+  table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px;}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);}
+  th{color:var(--muted);font-weight:500;font-size:11px;}
+  td.mono,th.mono{font-family:var(--mono);}
+  .hint{font-size:12px;color:var(--muted);margin-top:8px;}
+  .warn{font-size:12px;color:var(--bad);margin-top:8px;}
+  .ok{font-size:12px;color:var(--ok);margin-top:8px;}
+  .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px;}
+  code{font-family:var(--mono);background:#e6ebf0;padding:1px 5px;border-radius:3px;font-size:12px;}
+  .navlink{font-size:13px;color:var(--accent);text-decoration:none;border:1px solid var(--accent);padding:6px 12px;border-radius:6px;}
+  .twocol{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+  .dropzone{border:1.5px dashed var(--line);border-radius:8px;padding:14px;text-align:center;font-size:13px;color:var(--muted);}
+  .dropzone.ok{border-color:var(--ok);color:var(--ok);background:var(--ok-bg);}
+  input.val{width:90px;}
+  .badge{font-size:10px;padding:2px 7px;border-radius:5px;background:var(--accent);color:#fff;margin-left:6px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>SVG 規則產生器 <span class="badge">CDR / RTPS</span></h1>
+  <div class="sub">ROS2 原生 · Fast DDS / Cyclone / OpenDDS / Connext 通用 · 二進位 CDR 解析<br>
+    <span style="font-size:12px;">CDR 為二進位序列化,需搭配 <code>.msg</code> 型別定義才能定位欄位。兩者到齊才能解析。</span>
+    <a class="navlink" href="index.html" style="margin-left:8px;">JSON 版 →</a>
+    <a class="navlink" href="integrate.html">整合頁 →</a>
+  </div>
+
+  <!-- STEP 1: 兩個輸入 -->
+  <div class="step">
+    <div class="step-h"><span class="num">1</span> 上傳 CDR 封包 + .msg 定義（兩者到齊）</div>
+    <div class="twocol">
+      <div>
+        <label>① CDR 封包（.bin / hex 文字）</label>
+        <div class="dropzone" id="dzBin">尚未載入 CDR 封包<input type="file" id="fBin" accept=".bin,.hex,.txt" style="display:block;margin-top:8px;font-size:12px;"></div>
+      </div>
+      <div>
+        <label>② .msg 型別定義</label>
+        <div class="dropzone" id="dzMsg">尚未載入 .msg<input type="file" id="fMsg" accept=".msg,.txt" style="display:block;margin-top:8px;font-size:12px;"></div>
+      </div>
+    </div>
+    <label style="margin-top:12px;">或直接貼上 .msg（例：geometry_msgs/Twist）</label>
+    <textarea id="msgText" style="height:90px;">float64 linear.x
+float64 linear.y
+float64 linear.z
+float64 angular.x
+float64 angular.y
+float64 angular.z</textarea>
+    <label style="margin-top:10px;">CDR 封包 hex（可貼上,空白/換行忽略）</label>
+    <textarea id="binText" style="height:70px;">00 01 00 00 00 00 00 00 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 E0 3F</textarea>
+    <label style="margin-top:10px;">此封包對應的 id（topic 編號,0~511）</label>
+    <input type="number" id="cdrId" value="1" style="width:90px;">
+    <div class="bar"><button id="btnParse">解析 CDR →</button><span class="hint" id="parseInfo"></span></div>
+  </div>
+
+  <!-- STEP 2 -->
+  <div class="step" id="s2" style="display:none;">
+    <div class="step-h"><span class="num">2</span> 解析結果 → 逐參數指定規則</div>
+    <div class="hint">依 .msg 順序與 CDR 對齊規則解出每個欄位值。為每個參數指定 op 與門檻（LE/GE/EQ/ANY）。前 8 個欄位對應 Core 的 v0~v7。</div>
+    <table id="paramTbl"></table>
+  </div>
+
+  <!-- STEP 3 -->
+  <div class="step" id="s3" style="display:none;">
+    <div class="step-h"><span class="num">3</span> 產生 Core config words</div>
+    <div class="bar"><button id="btnGen">產生 config words</button></div>
+    <div id="genOut" style="margin-top:12px;"></div>
+  </div>
+</div>
+
+<script>
+// ===== CDR 解析器(已用 foxglove/cdr 真實樣本驗證) =====
+var SIZE={float64:8,float32:4,int64:8,uint64:8,int32:4,uint32:4,int16:2,uint16:2,int8:1,uint8:1,bool:1,byte:1,char:1};
+function parseCDR(bytes, schema){
+  var eh=(bytes[0]<<8)|bytes[1];           // 0x0001=little-endian
+  var le=(eh&0x0001)===0x0001;
+  var off=4, base=4;                        // 跳過 4-byte encapsulation header
+  var dv=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+  var res=[];
+  for(var i=0;i<schema.length;i++){
+    var f=schema[i], sz=SIZE[f.type];
+    if(!sz) throw new Error("不支援的型別: "+f.type);
+    var rel=off-base, pad=(sz-(rel%sz))%sz; off+=pad;
+    if(off+sz>bytes.length) throw new Error("封包長度不足,無法解 "+f.name+"(可能 .msg 與封包不符)");
+    var v;
+    switch(f.type){
+      case 'float64':v=dv.getFloat64(off,le);break;
+      case 'float32':v=dv.getFloat32(off,le);break;
+      case 'int32':v=dv.getInt32(off,le);break;
+      case 'uint32':v=dv.getUint32(off,le);break;
+      case 'int16':v=dv.getInt16(off,le);break;
+      case 'uint16':v=dv.getUint16(off,le);break;
+      case 'int8':v=dv.getInt8(off);break;
+      case 'uint8':case 'byte':case 'char':v=dv.getUint8(off);break;
+      case 'bool':v=dv.getUint8(off)!==0?1:0;break;
+      case 'int64':case 'uint64':
+        // 簡化:讀低 32 位(POC 夠用),避免 BigInt 相容問題
+        v=le?dv.getUint32(off,true):dv.getUint32(off+4,false);break;
+    }
+    res.push({name:f.name,type:f.type,value:v});
+    off+=sz;
+  }
+  return {fields:res,littleEndian:le};
+}
+// 解析 .msg:每行「type name」,忽略註解/空行/常數
+function parseMsg(text){
+  var out=[];
+  text.split(/\r?\n/).forEach(function(line){
+    var l=line.replace(/#.*$/,'').trim();
+    if(!l)return;
+    var parts=l.split(/\s+/);
+    if(parts.length<2)return;
+    var type=parts[0], name=parts[1];
+    if(name.indexOf('=')>=0)return;        // 常數,略
+    // 型別正規化
+    type=type.replace(/^std_msgs\/|^builtin_interfaces\//,'');
+    if(SIZE[type]) out.push({type:type,name:name});
+    // 不支援的複合型別:標記但略過(POC 先支援 primitive)
+  });
+  return out;
+}
+function hexToBytes(t){
+  var clean=t.replace(/[^0-9a-fA-F]/g,'');
+  if(clean.length%2)clean=clean.slice(0,-1);
+  var b=new Uint8Array(clean.length/2);
+  for(var i=0;i<b.length;i++)b[i]=parseInt(clean.substr(i*2,2),16);
+  return b;
+}
+
+var PARSED=[], CDRID=1;
+
+// 檔案載入
+document.getElementById("fMsg").addEventListener("change",function(e){
+  var f=e.target.files[0];if(!f)return;var r=new FileReader();
+  r.onload=function(){document.getElementById("msgText").value=r.result;
+    document.getElementById("dzMsg").classList.add("ok");
+    document.getElementById("dzMsg").firstChild.textContent="✓ "+f.name;};
+  r.readAsText(f);
+});
+document.getElementById("fBin").addEventListener("change",function(e){
+  var f=e.target.files[0];if(!f)return;var r=new FileReader();
+  r.onload=function(){
+    var buf=new Uint8Array(r.result);
+    document.getElementById("binText").value=Array.from(buf).map(function(b){return ("0"+b.toString(16)).slice(-2);}).join(" ");
+    document.getElementById("dzBin").classList.add("ok");
+    document.getElementById("dzBin").firstChild.textContent="✓ "+f.name;};
+  r.readAsArrayBuffer(f);
+});
+
+function doParse(){
+  var schema=parseMsg(document.getElementById("msgText").value);
+  var bytes=hexToBytes(document.getElementById("binText").value);
+  CDRID=parseInt(document.getElementById("cdrId").value)||0;
+  var info=document.getElementById("parseInfo");
+  if(!schema.length){info.textContent="✗ .msg 未解析出任何 primitive 欄位";return;}
+  if(bytes.length<4){info.textContent="✗ CDR 封包太短(需含 4-byte header)";return;}
+  var out;
+  try{ out=parseCDR(bytes,schema); }
+  catch(e){ info.textContent="✗ "+e.message; return; }
+  PARSED=out.fields;
+  info.textContent="✓ 解析 "+PARSED.length+" 欄位("+(out.littleEndian?"little":"big")+"-endian) · id="+CDRID;
+  renderParams();
+  document.getElementById("s2").style.display="block";
+  document.getElementById("s3").style.display="block";
+}
+function fx(d){var v=Math.round(d*1000);if(v<0)v=0;if(v>65535)v=65535;return v;}
+function renderParams(){
+  var t=document.getElementById("paramTbl");
+  var h="<tr><th>#</th><th>參數(.msg)</th><th>型別</th><th>解出值</th><th>定點(×1000)</th><th>v槽</th><th>op</th><th>門檻</th></tr>";
+  PARSED.forEach(function(p,i){
+    var slot=i, over=i>7;
+    h+="<tr"+(over?" style='opacity:.4;'":"")+"><td>"+(i+1)+"</td><td class='mono'>"+p.name+"</td><td>"+p.type+"</td>"+
+       "<td class='mono'>"+p.value+"</td><td class='mono'>"+fx(p.value)+"</td>"+
+       "<td>"+(over?"—(超過8槽)":slot)+"</td>";
+    if(over){h+="<td colspan=2>(不納入)</td></tr>";return;}
+    h+="<td><select id='op"+i+"'><option value='ANY'>ANY</option><option value='LE'>LE ≤</option><option value='GE'>GE ≥</option><option value='EQ'>EQ =</option></select></td>"+
+       "<td><input class='val mono' id='thr"+i+"' type='number' value='"+fx(p.value)+"'></td></tr>";
+  });
+  t.innerHTML=h;
+}
+var OPVAL={ANY:15,LE:1,GE:2,EQ:3};
+function cfgWord(op,field,id,thr){return (((op&0xF)<<28)|((field&0x7)<<25)|((id&0x1FF)<<16)|(thr&0xFFFF))>>>0;}
+function hex32(n){return ("00000000"+n.toString(16).toUpperCase()).slice(-8);}
+function genConfig(){
+  var slots={};
+  PARSED.forEach(function(p,i){
+    if(i>7)return;
+    var opSel=document.getElementById("op"+i),thrIn=document.getElementById("thr"+i);
+    if(!opSel)return;
+    slots[i]={op:OPVAL[opSel.value],thr:parseInt(thrIn.value)||0,name:p.name};
+  });
+  var words=[],rows=[];
+  for(var slot=0;slot<8;slot++){
+    var r=slots[slot];
+    if(r){var w=cfgWord(r.op,slot,CDRID,r.thr);words.push(w);rows.push([slot,r.name,opName(r.op)+" "+r.thr,hex32(w)]);}
+    else{var w2=cfgWord(15,slot,CDRID,0);words.push(w2);rows.push([slot,"—","ANY",hex32(w2)]);}
+  }
+  var html="<div class='ok'>✓ 產生 "+words.length+" 個 config words(id="+CDRID+")</div>";
+  html+="<table><tr><th>v槽</th><th>參數</th><th>規則</th><th class='mono'>config word</th></tr>";
+  rows.forEach(function(c){html+="<tr><td>"+c[0]+"</td><td class='mono'>"+c[1]+"</td><td>"+c[2]+"</td><td class='mono'>"+c[3]+"</td></tr>";});
+  html+="</table>";
+  window.__W=words;
+  html+="<div class='bar'><button class='ghost' id='btnHex'>下載 core_config.hex</button></div>";
+  document.getElementById("genOut").innerHTML=html;
+  document.getElementById("btnHex").addEventListener("click",function(){
+    download("core_config_cdr_id"+CDRID+".hex",window.__W.map(hex32).join("\n"));
+  });
+}
+function opName(o){return o===1?"LE":o===2?"GE":o===3?"EQ":o===15?"ANY":"?";}
+function download(name,text){var b=new Blob([text],{type:"text/plain"});var a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;a.click();}
+
+document.getElementById("btnParse").addEventListener("click",doParse);
+document.getElementById("btnGen").addEventListener("click",genConfig);
+</script>
+</body>
+</html>
