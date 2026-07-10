@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SVG 規則產生器 · rosbridge v2.1</title>
+<style>
+  :root{
+    --bg:#f4f4f2; --card:#fff; --ink:#1a1a18; --muted:#6b6b66; --line:#dcdcd6;
+    --accent:#b8862f; --ok:#1d7a53; --ok-bg:#e3f3ec; --bad:#b3382f; --bad-bg:#f8e9e7;
+    --mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,'Segoe UI','Noto Sans TC',sans-serif;background:var(--bg);color:var(--ink);line-height:1.6;}
+  .wrap{max-width:920px;margin:0 auto;padding:24px 20px 80px;}
+  h1{font-size:24px;font-weight:700;margin:0 0 4px;}
+  .sub{color:var(--muted);font-size:14px;margin-bottom:24px;}
+  .step{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-bottom:16px;}
+  .step-h{display:flex;align-items:center;gap:8px;font-weight:600;font-size:15px;margin-bottom:12px;}
+  .num{background:var(--accent);color:#fff;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px;flex:none;}
+  label{font-size:13px;color:var(--muted);display:block;margin-bottom:6px;}
+  textarea,input[type=text],input[type=number],select{font-family:var(--mono);border:1px solid var(--line);border-radius:6px;padding:7px 9px;font-size:12px;background:#fff;}
+  textarea{width:100%;height:130px;resize:vertical;}
+  button{font-family:inherit;font-size:14px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;padding:9px 16px;cursor:pointer;font-weight:500;}
+  button.ghost{background:#fff;color:var(--accent);}
+  button:hover{opacity:.9;}
+  table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px;}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:middle;}
+  th{color:var(--muted);font-weight:500;font-size:11px;}
+  td.mono,th.mono{font-family:var(--mono);}
+  .hint{font-size:12px;color:var(--muted);margin-top:8px;}
+  .warn{font-size:12px;color:var(--bad);margin-top:8px;}
+  .ok{font-size:12px;color:var(--ok);margin-top:8px;}
+  .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px;}
+  code{font-family:var(--mono);background:#efefe9;padding:1px 5px;border-radius:3px;font-size:12px;}
+  select{cursor:pointer;}
+  input.val{width:90px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>SVG 規則產生器</h1>
+  <div class="sub">rosbridge v2.1 · 解析 JSON → 逐參數指定規則(op) → 產生 Core config words → 匯出規則包<br>
+    <span style="color:var(--muted);font-size:12px;">此工具只負責「把指令參數轉成 Core 規則字」。數值合理性由工程師判斷，裁決由燒錄後的硬體執行。</span></div>
+
+  <!-- STEP 1 -->
+  <div class="step">
+    <div class="step-h"><span class="num">1</span> 上傳 / 貼上指令封包（每行一則 JSON）</div>
+    <input type="file" id="file" accept=".json,.jsonl,.txt" style="font-size:13px;margin-bottom:10px;">
+    <label>或直接貼上（多筆正確指令，代表這個 topic 的合法動作）</label>
+    <textarea id="pkt">{"op":"publish","topic":"/cmd_vel","msg":{"linear":{"x":2.0},"angular":{"z":0.5}}}
+{"op":"publish","topic":"/cmd_vel","msg":{"linear":{"x":2.1},"angular":{"z":0.48}}}
+{"op":"send_action_goal","action":"/navigate","args":{"pose":{"x":1.5,"y":0.3}}}
+{"op":"call_service","service":"/gripper","args":{"force":8.0}}</textarea>
+    <div class="bar">
+      <button id="btnParse">確認並開始解析 →</button>
+      <span class="hint" id="parseInfo"></span>
+    </div>
+  </div>
+
+  <!-- STEP 2 -->
+  <div class="step" id="s2" style="display:none;">
+    <div class="step-h"><span class="num">2</span> 解析結果 → 逐參數指定規則</div>
+    <div class="hint">系統解析出每個 <code>id</code>（topic/service/action）與其參數。請為每個參數指定 op 與門檻值：
+      <code>LE</code>≤上限　<code>GE</code>≥下限　<code>EQ</code>=精確值　<code>ANY</code>不限。門檻預設帶入觀測值(×1000定點)，可改。</div>
+    <table id="paramTbl"></table>
+    <div class="hint" id="mapNote"></div>
+  </div>
+
+  <!-- STEP 3 -->
+  <div class="step" id="s3" style="display:none;">
+    <div class="step-h"><span class="num">3</span> 產生 Core config words</div>
+    <div class="hint">依上表產生 32-bit config 字：<code>[31:28]op [27:25]field [24:16]id [15:0]thresh</code>。未指定規則的 v 槽自動填 ANY(不限)。</div>
+    <div class="bar"><button id="btnGen">產生 config words</button></div>
+    <div id="genOut" style="margin-top:12px;"></div>
+  </div>
+</div>
+
+<script>
+// ===== 寫死映射(demo);之後可改為使用者可設 =====
+var ID_MAP={"/cmd_vel":1,"/navigate":2,"/gripper":3};
+// 每個 id 的參數 -> v槽順序(field 0..7)。列出的參數才會成為規則,未列的忽略(避免遺漏靠此表檢查)
+var FIELD_MAP={
+  "/cmd_vel":["linear.x","angular.z"],
+  "/navigate":["pose.x","pose.y"],
+  "/gripper":["force"]
+};
+var OPVAL={ANY:15,LE:1,GE:2,EQ:3};
+var PARSED=[];  // [{id, idnum, field, fname, observed(定點)}]
+
+function flatten(obj,prefix,acc){
+  if(obj===null||typeof obj!=="object")return acc;
+  for(var k in obj){
+    var v=obj[k],key=prefix?prefix+"."+k:k;
+    if(v!==null&&typeof v==="object"&&!Array.isArray(v))flatten(v,key,acc);
+    else if(typeof v==="number")acc[key]=v;
+  }
+  return acc;
+}
+function parseLine(line){
+  var m;try{m=JSON.parse(line);}catch(e){return null;}
+  var op=m.op,id=null,valObj=null;
+  if(op==="publish"){id=m.topic;valObj=m.msg;}
+  else if(op==="call_service"){id=m.service;valObj=m.args;}
+  else if(op==="send_action_goal"){id=m.action;valObj=m.args;}
+  else{id=m.topic||m.service||m.action||"(n/a)";valObj=m.msg||m.args||{};}
+  return{id:id,vals:flatten(valObj||{},"",{})};
+}
+function fx(d){var v=Math.round(d*1000); if(v<0)v=0; if(v>65535)v=65535; return v;}
+
+document.getElementById("file").addEventListener("change",function(e){
+  var f=e.target.files[0];if(!f)return;
+  var r=new FileReader();
+  r.onload=function(){document.getElementById("pkt").value=r.result;};
+  r.readAsText(f);
+});
+
+function doParse(){
+  var lines=document.getElementById("pkt").value.split("\n").filter(function(l){return l.trim();});
+  // 彙整:每個 id 的每個參數,取觀測值(多筆取平均當預設,工程師可改)
+  var agg={},bad=0,missNote=[];
+  lines.forEach(function(line){
+    var p=parseLine(line);
+    if(!p){bad++;return;}
+    if(ID_MAP[p.id]===undefined){ if(missNote.indexOf(p.id)<0)missNote.push(p.id); }
+    var fmap=FIELD_MAP[p.id]||[];
+    for(var f in p.vals){
+      var key=p.id+"||"+f;
+      if(!agg[key])agg[key]={id:p.id,fname:f,sum:0,n:0,inmap:fmap.indexOf(f)>=0,field:fmap.indexOf(f)};
+      agg[key].sum+=p.vals[f]; agg[key].n++;
+    }
+  });
+  PARSED=Object.keys(agg).map(function(k){
+    var a=agg[k];
+    return {id:a.id, idnum:ID_MAP[a.id], fname:a.fname, field:a.field, inmap:a.inmap,
+            observed:fx(a.sum/a.n)};
+  });
+  document.getElementById("parseInfo").textContent="解析 "+lines.length+" 筆"+(bad?("，"+bad+" 筆失敗"):"")+"，得 "+PARSED.length+" 個參數";
+  renderParams();
+  var mn=document.getElementById("mapNote");
+  var unmapped=PARSED.filter(function(p){return p.idnum===undefined;});
+  var notInField=PARSED.filter(function(p){return p.idnum!==undefined && !p.inmap;});
+  var msg="";
+  if(unmapped.length)msg+="⚠ 無對應 Core id 的 topic："+[...new Set(unmapped.map(function(p){return p.id;}))].join(", ")+"（不會成為規則）。";
+  if(notInField.length)msg+=" ⚠ 未在欄位映射的參數："+notInField.map(function(p){return p.id+"."+p.fname;}).join(", ")+"（會被忽略,恐遺漏）。";
+  mn.className=msg?"warn":"ok"; mn.textContent=msg||"✓ 所有解析參數都對應到 Core 欄位,無遺漏。";
+  document.getElementById("s2").style.display="block";
+  document.getElementById("s3").style.display="block";
+}
+
+function renderParams(){
+  var t=document.getElementById("paramTbl");
+  var h="<tr><th>id (topic)</th><th>Core id</th><th>參數</th><th>v槽</th><th>觀測值(定點)</th><th>op</th><th>門檻 thresh</th></tr>";
+  PARSED.forEach(function(p,i){
+    if(p.idnum===undefined || !p.inmap){
+      h+="<tr style='opacity:.45;'><td class='mono'>"+p.id+"</td><td>—</td><td class='mono'>"+p.fname+"</td><td>—</td><td class='mono'>"+p.observed+"</td><td colspan=2>(不納入規則)</td></tr>";
+      return;
+    }
+    h+="<tr><td class='mono'>"+p.id+"</td><td>"+p.idnum+"</td><td class='mono'>"+p.fname+"</td><td>"+p.field+"</td>"+
+       "<td class='mono'>"+p.observed+"</td>"+
+       "<td><select id='op"+i+"'><option value='LE'>LE ≤</option><option value='GE'>GE ≥</option><option value='EQ'>EQ =</option><option value='ANY'>ANY</option></select></td>"+
+       "<td><input class='val mono' id='thr"+i+"' type='number' value='"+p.observed+"'></td></tr>";
+  });
+  t.innerHTML=h;
+}
+
+function cfgWord(op,field,id,thr){
+  return (((op&0xF)<<28)|((field&0x7)<<25)|((id&0x1FF)<<16)|(thr&0xFFFF))>>>0;
+}
+function hex32(n){return ("00000000"+n.toString(16).toUpperCase()).slice(-8);}
+
+function genConfig(){
+  // 收集每個 id 用到的 v槽規則
+  var byId={};
+  PARSED.forEach(function(p,i){
+    if(p.idnum===undefined || !p.inmap)return;
+    var opSel=document.getElementById("op"+i), thrIn=document.getElementById("thr"+i);
+    if(!opSel)return;
+    var op=OPVAL[opSel.value], thr=parseInt(thrIn.value)||0;
+    if(!byId[p.idnum])byId[p.idnum]={slots:{}};
+    byId[p.idnum].slots[p.field]={op:op,thr:thr,fname:p.fname};
+  });
+  var words=[],rows=[];
+  Object.keys(byId).forEach(function(idnum){
+    idnum=parseInt(idnum);
+    for(var slot=0;slot<8;slot++){
+      var r=byId[idnum].slots[slot];
+      if(r){ var w=cfgWord(r.op,slot,idnum,r.thr); words.push(w);
+        rows.push([idnum,slot,r.fname,opName(r.op)+" "+r.thr,hex32(w)]); }
+      else { var w2=cfgWord(15,slot,idnum,0); words.push(w2);
+        rows.push([idnum,slot,"—","ANY",hex32(w2)]); }
+    }
+  });
+  var html="<div class='ok'>✓ 產生 "+words.length+" 個 config words（id&lt;512、8欄位、16-bit thresh 均合規）。</div>";
+  html+="<table><tr><th>Core id</th><th>v槽</th><th>參數</th><th>規則</th><th class='mono'>config word</th></tr>";
+  rows.forEach(function(c){html+="<tr><td>"+c[0]+"</td><td>"+c[1]+"</td><td class='mono'>"+c[2]+"</td><td>"+c[3]+"</td><td class='mono'>"+c[4]+"</td></tr>";});
+  html+="</table>";
+  window.__WORDS=words;
+  html+="<div class='bar'><button class='ghost' id='btnHex'>下載 core_config.hex</button>"+
+        "<button class='ghost' id='btnJson'>下載 rules.json</button></div>";
+  document.getElementById("genOut").innerHTML=html;
+  document.getElementById("btnHex").addEventListener("click",function(){
+    download("core_config.hex", window.__WORDS.map(hex32).join("\n"));
+  });
+  document.getElementById("btnJson").addEventListener("click",function(){
+    var pkg={version:"1.0",generated:new Date().toISOString(),count:window.__WORDS.length,
+             config_words:window.__WORDS.map(hex32)};
+    download("rules.json",JSON.stringify(pkg,null,2));
+  });
+}
+function opName(o){return o===1?"LE":o===2?"GE":o===3?"EQ":o===15?"ANY":"?";}
+function download(name,text){
+  var blob=new Blob([text],{type:"text/plain"});
+  var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;a.click();
+}
+
+document.getElementById("btnParse").addEventListener("click",doParse);
+document.getElementById("btnGen").addEventListener("click",genConfig);
+</script>
+</body>
+</html>
